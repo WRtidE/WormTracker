@@ -13,9 +13,9 @@ from PyQt6.QtGui import QImage, QPixmap, QColor, QFont, QIcon
 from PyQt6.QtCore import QThread, pyqtSignal, Qt
 
 # ==========================================================
-# 🟢 从 v4.py 导入算法核心
+# 🟢 从 counter.py 导入算法核心
 # ==========================================================
-from v4 import (
+from counter import (
     get_interpolated_grid, detect_worms, update_tracks, count_crossings, draw_dashboard,
     NUM_CHANNELS, X_MARGIN, WALL_RATIO, TRIPWIRE_RATIO, MIN_AREA, 
     BG_HISTORY, INIT_FRAME_INDEX, PANIC_NOISE_RATIO, GRID_MUTATION_TOLERANCE, 
