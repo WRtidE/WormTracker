@@ -9,7 +9,9 @@ from collections import deque
 NUM_CHANNELS = 32              # 物理通道数量
 X_MARGIN = (0.05, 0.15)        # 左侧屏蔽5%，右侧屏蔽15%
 WALL_RATIO = 0.0               # 物理墙壁厚度比例
-TRIPWIRE_RATIO = 0.65           # 虚拟检测线高度 (65%)
+TRIPWIRE_RATIO = 0.65           # 虚拟检测线高度 (65%) - 保留兼容
+ROI_MASK_TOP_RATIO = 0.35       # 🆕 Mask 上界线 (屏蔽上方噪点)
+ROI_MASK_BOTTOM_RATIO = 0.85    # 🆕 Mask 下界线 (屏蔽下方噪点)
 MIN_AREA = 15                  # 线虫最小面积
 MAX_AREA = 4500                # 线虫最大面积 (稍微调大，容忍高速残影)
 BG_HISTORY = 500               # 背景模型历史帧数
@@ -81,13 +83,23 @@ def get_interpolated_grid(frame, num_channels, x_margin_ratio, crop_ratio=(0.3, 
     }
 
 # 线虫检测
-def detect_worms(frame, backSub, grid_data, min_area=15):
-    """检测器：彻底解决 1虫2点（头+尾）问题，引入坐标熔断机制"""
+def detect_worms(frame, backSub, grid_data, min_area=15, roi_mask_top=None, roi_mask_bottom=None):
+    """检测器：彻底解决 1虫2点问题，支持 Y 范围 mask 屏蔽界外噪点"""
     gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
     blur = cv2.GaussianBlur(gray, (5, 5), 0)
     
     raw_fg_mask = backSub.apply(blur)
     h, w = raw_fg_mask.shape
+
+    # 🆕 Y 范围 mask：屏蔽上下界外的区域
+    if roi_mask_top is not None or roi_mask_bottom is not None:
+        y_mask = np.ones((h, w), dtype=np.uint8) * 255
+        if roi_mask_top is not None:
+            y_mask[:int(roi_mask_top), :] = 0
+        if roi_mask_bottom is not None:
+            y_mask[int(roi_mask_bottom):, :] = 0
+        raw_fg_mask = cv2.bitwise_and(raw_fg_mask, y_mask)
+
     noise_ratio = cv2.countNonZero(raw_fg_mask) / (h * w)
     
     safe_mask = np.zeros((h, w), dtype=np.uint8)
@@ -195,7 +207,7 @@ def update_tracks(current_centroids, active_worms, next_worm_id, cross_cooldown)
 
 
 def count_crossings(active_worms, counts_dict, channel_bounds, tripwire_y, cross_cooldown):
-    """基于‘中心点距离’的精准归属计数器"""
+    """基于'中心点距离'的精准归属计数器（单线越线模式）"""
     for wid, history in active_worms.items():
         if len(history) < 2: continue
         if cross_cooldown.get(wid, 0) > 0: continue
@@ -208,23 +220,14 @@ def count_crossings(active_worms, counts_dict, channel_bounds, tripwire_y, cross
             curr_x = p2[0]
             
             # 💥 基础逻辑升级：寻找距离当前 X 最近的通道中心
-            # 1. 计算每个通道的中心位置
             channel_centers = [(b[0] + b[1]) / 2 for b in channel_bounds]
-            
-            # 2. 计算质心到所有中心的距离
             distances = [abs(curr_x - center) for center in channel_centers]
-            
-            # 3. 找到距离最小的那个通道索引
             best_idx = np.argmin(distances)
             
-            # 4. 执行计数：总通道数 - 索引，实现左大右小 (如 32, 31...)
-            # 如果你需要左小右大，改为 found_channel = best_idx + 1 即可
             current_total_channels = len(channel_bounds)
             found_channel = current_total_channels - best_idx 
             
             counts_dict[found_channel] += 1
-            
-            # 防抖冷却：建议设置 20 帧左右，防止线虫在红线处反复横跳
             cross_cooldown[wid] = CROSS_DEBOUNCE
             
             print(f"🎯 精准捕获！线虫 ID-{wid} 归属于通道 {found_channel} (距离中心 {distances[best_idx]:.1f}px)")
@@ -232,8 +235,8 @@ def count_crossings(active_worms, counts_dict, channel_bounds, tripwire_y, cross
     return counts_dict, cross_cooldown
 
 
-def draw_dashboard(frame, counts_dict, grid_data, active_worms, tripwire_y, fg_mask=None, is_panic=False, cooldown_rem=0):
-    """UI大屏渲染"""
+def draw_dashboard(frame, counts_dict, grid_data, active_worms, tripwire_y, fg_mask=None, is_panic=False, cooldown_rem=0, mask_top=None, mask_bottom=None):
+    """UI大屏渲染（tripwire 计数 + mask 边界可视化）"""
     h, w = frame.shape[:2]
     overlay = frame.copy()
     
@@ -241,19 +244,30 @@ def draw_dashboard(frame, counts_dict, grid_data, active_worms, tripwire_y, fg_m
         for w_left, w_right in grid_data['wall_bounds']:
             cv2.rectangle(overlay, (w_left, 0), (w_right, h), (0, 0, 255), -1)
         cv2.addWeighted(overlay, 0.2, frame, 0.8, 0, frame)
-        cv2.line(frame, (grid_data['roi_left'], tripwire_y), (grid_data['roi_right'], tripwire_y), (0, 0, 255), 2)
+        
+        # 🔴 计数红线 (tripwire)
+        cv2.line(frame, (grid_data['roi_left'], tripwire_y),
+                 (grid_data['roi_right'], tripwire_y), (0, 0, 255), 2)
+
+        # 🟡 Mask 上下界 (虚线风格)
+        if mask_top is not None:
+            cv2.line(frame, (grid_data['roi_left'], int(mask_top)),
+                     (grid_data['roi_right'], int(mask_top)), (0, 215, 255), 1)
+            cv2.putText(frame, "MASK TOP", (grid_data['roi_right'] + 5, int(mask_top) + 5),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.35, (0, 215, 255), 1)
+        if mask_bottom is not None:
+            cv2.line(frame, (grid_data['roi_left'], int(mask_bottom)),
+                     (grid_data['roi_right'], int(mask_bottom)), (0, 215, 255), 1)
+            cv2.putText(frame, "MASK BOT", (grid_data['roi_right'] + 5, int(mask_bottom) + 5),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.35, (0, 215, 255), 1)
         
         current_total_channels = len(grid_data['channel_bounds'])
         for idx, (c_left, c_right) in enumerate(grid_data['channel_bounds']):
-            # 动态生成当前 ID
             channel_id = current_total_channels - idx  
-            
             center_x = int((c_left + c_right) / 2)
             cv2.line(frame, (c_left, 0), (c_left, h), (0, 255, 0), 1)
             cv2.line(frame, (c_right, 0), (c_right, h), (0, 255, 0), 1)
             cv2.putText(frame, str(channel_id), (center_x - 8, 25), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (200, 200, 200), 1)
-            
-            # 使用 .get() 安全获取，万一发生数据延迟不同步也不会崩溃
             count_val = counts_dict.get(channel_id, 0)
             color = (0, 255, 0) if count_val > 0 else (100, 100, 100)
             cv2.putText(frame, str(count_val), (center_x - 8, tripwire_y - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.4, color, 1)

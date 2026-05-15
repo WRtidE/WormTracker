@@ -19,7 +19,7 @@ from counter import (
     get_interpolated_grid, detect_worms, update_tracks, count_crossings, draw_dashboard,
     NUM_CHANNELS, X_MARGIN, WALL_RATIO, TRIPWIRE_RATIO, MIN_AREA, 
     BG_HISTORY, INIT_FRAME_INDEX, PANIC_NOISE_RATIO, GRID_MUTATION_TOLERANCE, 
-    COOLDOWN_FRAMES
+    COOLDOWN_FRAMES, ROI_MASK_TOP_RATIO, ROI_MASK_BOTTOM_RATIO
 )
 
 # ==========================================================
@@ -40,7 +40,9 @@ class VideoThread(QThread):
         self.algo_params = {
             'num_channels': NUM_CHANNELS,
             'tripwire_ratio': TRIPWIRE_RATIO,
-            'min_area': MIN_AREA
+            'min_area': MIN_AREA,
+            'mask_top_ratio': ROI_MASK_TOP_RATIO,
+            'mask_bottom_ratio': ROI_MASK_BOTTOM_RATIO
         }
 
     def update_param(self, key, value):
@@ -85,8 +87,13 @@ class VideoThread(QThread):
                 tripwire_y = int(frame.shape[0] * self.algo_params['tripwire_ratio'])
             except Exception: is_panic_now = True
 
+            roi_mask_top = int(frame.shape[0] * self.algo_params['mask_top_ratio'])
+            roi_mask_bottom = int(frame.shape[0] * self.algo_params['mask_bottom_ratio'])
+
             if frame_idx > INIT_FRAME_INDEX:
-                centroids, fg_mask, noise_ratio, raw_fg = detect_worms(frame, backSub, grid_data, self.algo_params['min_area'])
+                centroids, fg_mask, noise_ratio, raw_fg = detect_worms(
+                    frame, backSub, grid_data, self.algo_params['min_area'],
+                    roi_mask_top=roi_mask_top, roi_mask_bottom=roi_mask_bottom)
                 if noise_ratio > PANIC_NOISE_RATIO: is_panic_now = True
             else: raw_fg = None
                 
@@ -98,16 +105,16 @@ class VideoThread(QThread):
                 gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
                 blur = cv2.GaussianBlur(gray, (5, 5), 0)
                 backSub.apply(blur, learningRate=0.1) 
-                display_frame = draw_dashboard(frame, counts, grid_data, {}, tripwire_y, None, is_panic=True, cooldown_rem=panic_cooldown)
+                display_frame = draw_dashboard(frame, counts, grid_data, {}, tripwire_y, None, is_panic=True, cooldown_rem=panic_cooldown, mask_top=roi_mask_top, mask_bottom=roi_mask_bottom)
             elif frame_idx > INIT_FRAME_INDEX:
                 active_worms, next_worm_id, movements, cross_cooldown = update_tracks(centroids, active_worms, next_worm_id, cross_cooldown)
                 counts, cross_cooldown = count_crossings(active_worms, counts, grid_data['channel_bounds'], tripwire_y, cross_cooldown)
-                display_frame = draw_dashboard(frame, counts, grid_data, active_worms, tripwire_y, None)
+                display_frame = draw_dashboard(frame, counts, grid_data, active_worms, tripwire_y, None, mask_top=roi_mask_top, mask_bottom=roi_mask_bottom)
             else:
                 gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
                 blur = cv2.GaussianBlur(gray, (5, 5), 0)
                 backSub.apply(blur, learningRate=0.05)
-                display_frame = draw_dashboard(frame, counts, grid_data, {}, tripwire_y, None)
+                display_frame = draw_dashboard(frame, counts, grid_data, {}, tripwire_y, None, mask_top=roi_mask_top, mask_bottom=roi_mask_bottom)
 
             mask_frame = raw_fg if raw_fg is not None else np.zeros(frame.shape[:2], dtype=np.uint8)
             self.change_pixmap_signal.emit(display_frame.copy(), mask_frame.copy())
@@ -129,7 +136,7 @@ class WormCounterApp(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("WormTrack Pro - 自动化线虫计数系统 v5.2 (Minimalist)")
-        self.setMinimumSize(1250, 850)
+        self.setMinimumSize(800, 400)
         
         self.setStyleSheet("""
             QMainWindow { background-color: #1e1e2e; }
@@ -259,6 +266,20 @@ class WormCounterApp(QMainWindow):
         self.spin_min_area.valueChanged.connect(lambda v: self.update_thread_param('min_area', v))
         param_layout.addRow("虫体滤噪 (最小面积):", self.spin_min_area)
 
+        # 4. Mask 上界 (屏蔽上方噪点)
+        self.spin_mask_top = QDoubleSpinBox()
+        self.spin_mask_top.setFixedHeight(40)
+        self.spin_mask_top.setRange(0.0, 1.0); self.spin_mask_top.setSingleStep(0.02); self.spin_mask_top.setValue(ROI_MASK_TOP_RATIO)
+        self.spin_mask_top.valueChanged.connect(self.on_mask_changed)
+        param_layout.addRow("Mask 上界 (屏蔽上方):", self.spin_mask_top)
+
+        # 5. Mask 下界 (屏蔽下方噪点)
+        self.spin_mask_bottom = QDoubleSpinBox()
+        self.spin_mask_bottom.setFixedHeight(40)
+        self.spin_mask_bottom.setRange(0.0, 1.0); self.spin_mask_bottom.setSingleStep(0.02); self.spin_mask_bottom.setValue(ROI_MASK_BOTTOM_RATIO)
+        self.spin_mask_bottom.valueChanged.connect(self.on_mask_changed)
+        param_layout.addRow("Mask 下界 (屏蔽下方):", self.spin_mask_bottom)
+
         layout_params.addWidget(param_group)
         
         tips_label = QLabel("💡 提示：在【暂停】或【未开始】时，\n修改高度可直接在画面预览检测线位置。\n更改通道数量将实时重置表格。")
@@ -320,6 +341,12 @@ class WormCounterApp(QMainWindow):
         if self.thread is None or not self.thread.isRunning() or self.thread.is_paused:
             self.render_preview_frame()
 
+    def on_mask_changed(self, value):
+        self.update_thread_param('mask_top_ratio', self.spin_mask_top.value())
+        self.update_thread_param('mask_bottom_ratio', self.spin_mask_bottom.value())
+        if self.thread is None or not self.thread.isRunning() or self.thread.is_paused:
+            self.render_preview_frame()
+
     def render_preview_frame(self):
         img_to_draw = None
         if self.thread and self.thread.isRunning() and self.thread.is_paused:
@@ -333,8 +360,17 @@ class WormCounterApp(QMainWindow):
             h, w = img_to_draw.shape[:2]
             y = int(h * self.spin_tripwire.value())
             cv2.line(img_to_draw, (0, y), (w, y), (0, 0, 255), 3)
-            cv2.putText(img_to_draw, f"Target Tripwire: {self.spin_tripwire.value():.2f}", 
+            cv2.putText(img_to_draw, f"Tripwire: {self.spin_tripwire.value():.2f}", 
                         (15, y - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 255), 2)
+            # Mask 上下界预览
+            mask_top_y = int(h * self.spin_mask_top.value())
+            mask_bot_y = int(h * self.spin_mask_bottom.value())
+            cv2.line(img_to_draw, (0, mask_top_y), (w, mask_top_y), (0, 215, 255), 2)
+            cv2.putText(img_to_draw, f"Mask Top: {self.spin_mask_top.value():.2f}",
+                        (15, mask_top_y - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 215, 255), 1)
+            cv2.line(img_to_draw, (0, mask_bot_y), (w, mask_bot_y), (0, 215, 255), 2)
+            cv2.putText(img_to_draw, f"Mask Bot: {self.spin_mask_bottom.value():.2f}",
+                        (15, mask_bot_y - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 215, 255), 1)
             fmt = QImage.Format.Format_RGB888 if len(img_to_draw.shape)==3 else QImage.Format.Format_Grayscale8
             qt_img = QImage(img_to_draw.data, w, h, img_to_draw.strides[0], fmt)
             if len(img_to_draw.shape)==3: qt_img = qt_img.rgbSwapped()
@@ -404,6 +440,8 @@ class WormCounterApp(QMainWindow):
         self.thread.update_param('num_channels', self.spin_channels.value())
         self.thread.update_param('tripwire_ratio', self.spin_tripwire.value())
         self.thread.update_param('min_area', self.spin_min_area.value())
+        self.thread.update_param('mask_top_ratio', self.spin_mask_top.value())
+        self.thread.update_param('mask_bottom_ratio', self.spin_mask_bottom.value())
 
         self.thread.change_pixmap_signal.connect(self.update_frame)
         self.thread.update_counts_signal.connect(self.update_stats)
