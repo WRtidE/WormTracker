@@ -31,7 +31,7 @@ _icon_map = {
 }
 icon_file = _icon_map.get(sys.platform, None)
 if icon_file and not os.path.exists(icon_file):
-    print(f"⚠️  图标文件不存在: {icon_file}，将跳过图标")
+    print(f"WARNING: Icon file not found: {icon_file}, skipping icon")
     icon_file = None
 
 # ── 数据文件 ────────────────────────────────────────────
