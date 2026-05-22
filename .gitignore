@@ -1,0 +1,38 @@
+# macOS 系统文件
+.DS_Store
+
+# Python 缓存
+__pycache__/
+*.py[cod]
+*$py.class
+
+# IDE 配置
+.vscode/
+
+# 图片
+img/
+.png
+
+# yolo文件夹
+yolo/
+
+# 视频与生成的大数据
+video/
+*.mp4
+*.csv
+
+# 文档与其他不需要公开的文件
+*.docx
+*.DOCX
+v4.py
+
+# ── 构建产物 (PyInstaller) ──
+build/
+dist/
+dist/
+*.spec.bak
+WormTracker-*.zip
+v5_yolo.py
+icon.ico
+main_v2_yolo.py
+

@@ -1,6 +1,8 @@
 import cv2
 import numpy as np
 import csv
+import os
+from datetime import datetime
 from collections import deque
 
 # ==========================================
@@ -427,8 +429,13 @@ def process_video(video_path):
     
     # 导出 CSV 文件
     csv_path = video_path.rsplit('.', 1)[0] + '_counts.csv'
+    video_name = os.path.basename(video_path)
+    gen_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     with open(csv_path, 'w', newline='', encoding='utf-8') as f:
         writer = csv.writer(f)
+        writer.writerow(['视频名称', video_name])
+        writer.writerow(['生成时间', gen_time])
+        writer.writerow([])  # 空行分隔
         writer.writerow(['通道编号', '线虫数量'])
         for label in sorted(PHYSICAL_LABELS):
             writer.writerow([label, counts[label]])
