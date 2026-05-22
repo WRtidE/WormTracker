@@ -71,9 +71,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: WormTracker-macOS
-          path: |
-            dist/WormTracker.app
-            dist/WormTracker-macOS.zip
+          path: dist/WormTracker-macOS.zip
           if-no-files-found: error
 
   # ── 发布 Release (仅 tag 触发) ──────────────────────
@@ -92,7 +90,6 @@ jobs:
         with:
           files: |
             WormTracker-Windows/WormTracker.exe
-            WormTracker-macOS/WormTracker.app/**
             WormTracker-macOS/WormTracker-macOS.zip
           draft: false
           generate_release_notes: true
