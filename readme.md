@@ -1,5 +1,14 @@
 # WormTracker 技术文档
 
+<p align="center">
+  <a href="https://github.com/WRtidE/WormTracker/actions"><img src="https://img.shields.io/github/actions/workflow/status/WRtidE/WormTracker/build.yml?branch=main&label=build&style=flat-square" alt="Build"></a>
+  <a href="https://github.com/WRtidE/WormTracker/releases"><img src="https://img.shields.io/github/v/release/WRtidE/WormTracker?include_prereleases&style=flat-square" alt="Release"></a>
+  <img src="https://img.shields.io/badge/platform-macOS%20%7C%20Windows-lightgrey?style=flat-square" alt="Platform">
+  <img src="https://img.shields.io/badge/python-3.9+-blue?style=flat-square&logo=python" alt="Python">
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-green?style=flat-square" alt="License"></a>
+  <img src="https://img.shields.io/github/stars/WRtidE/WormTracker?style=flat-square" alt="Stars">
+</p>
+
 <img src="https://azusa-img-1348009459.cos.ap-beijing.myqcloud.com/wormtrackericon.png" alt="WormTracker Icon" style="zoom:50%;" />
 
 ## 1. 系统概述
