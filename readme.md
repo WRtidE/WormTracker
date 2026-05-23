@@ -1,4 +1,4 @@
-# WormTracker 技术文档
+<h1 align="center">WormTracker 线虫计数工具</h1>
 
 <p align="center">
   <a href="https://github.com/WRtidE/WormTracker/actions"><img src="https://img.shields.io/github/actions/workflow/status/WRtidE/WormTracker/build.yml?branch=main&label=build&style=flat-square" alt="Build"></a>
