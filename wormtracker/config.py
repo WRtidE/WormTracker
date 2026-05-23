@@ -39,7 +39,7 @@ class WormTrackerConfig:
     # ---- MOG2 背景建模 ----
     bg_history: int = 500
     var_threshold: int = 16
-    init_frame_index: int = 30
+    init_frame_index: int = 60
 
     # ---- 追踪策略 (MOG2) ----
     max_dist_x: int = 25

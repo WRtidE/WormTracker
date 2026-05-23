@@ -197,4 +197,50 @@ python main.py
   - `pyyaml` — 配置文件读写
 - **内置模块**：`csv`, `collections.deque`, `os`, `datetime`
 
+------
+
+## 8. 安全验证风险说明
+
+从 GitHub Releases 下载的打包应用（`.app` / `.exe`）可能会被操作系统标记为安全风险，这是因为应用未经过商业代码签名证书签名。**这是正常现象，不代表应用包含恶意代码。**
+
+### 8.1 macOS 解决方案
+
+macOS Gatekeeper 会弹出以下提示：
+
+> **"Apple无法验证"WormTracker.app"是否包含可能危害Mac安全或泄漏隐私的恶意软件。"**
+
+也可能显示「无法验证开发者」或「已损坏，无法打开」。
+
+**方法一：右键打开（推荐）**
+
+在 Finder 中找到 `WormTracker.app`，**右键点击** → 选择 **「打开」**，在弹出的对话框中再次点击 **「打开」** 即可。
+
+**方法二：终端解除隔离**
+
+```bash
+# 移除下载文件的隔离标记
+xattr -d com.apple.quarantine /path/to/WormTracker.app
+# 或者对解压后的整个文件夹操作
+xattr -dr com.apple.quarantine /path/to/WormTracker.app
+```
+
+**方法三：系统设置放行**
+
+打开 **系统设置 → 隐私与安全性**，在底部找到被阻止的 WormTracker，点击 **「仍要打开」**。
+
+### 8.2 Windows 解决方案
+
+Windows SmartScreen 会提示「Windows 已保护你的电脑」。
+
+1. 在弹出的窗口中点击 **「更多信息」**
+2. 点击 **「仍要运行」** 即可启动应用
+
+> **提示**：上述警告仅因应用未购买昂贵的代码签名证书。如需彻底消除警告，可以从源码运行：
+> ```bash
+> git clone https://github.com/WRtidE/WormTracker.git
+> cd WormTracker
+> pip install -r requirements.txt
+> python main.py
+> ```
+
 

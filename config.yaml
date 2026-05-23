@@ -22,7 +22,7 @@ mask_bottom_ratio: 0.85    # 屏蔽区域下界 (仅 MOG2)
 # ---- MOG2 背景建模 ----
 bg_history: 500            # 背景学习历史帧数
 var_threshold: 16           # 背景模型敏感度 (越小越敏感)
-init_frame_index: 30       # 预热帧数
+init_frame_index: 60       # 预热帧数
 
 # ---- 追踪策略 ----
 max_dist_x: 25             # 最大水平位移 (防串道)

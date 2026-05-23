@@ -40,7 +40,7 @@ class MOG2Engine(BaseEngine):
         self._ensure_backsub(frame.shape)
         gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
         blur = cv2.GaussianBlur(gray, (5, 5), 0)
-        self._backSub.apply(blur, learningRate=0.05)
+        self._backSub.apply(blur, learningRate=0.1)
 
     def reset(self) -> None:
         """熔断时清空追踪器"""
@@ -64,6 +64,9 @@ class MOG2Engine(BaseEngine):
 
         if frame_idx <= self.config.init_frame_index:
             # 预热期：不检测，纯背景学习
+            # 前 10 帧双重学习，快速建立初始背景
+            if frame_idx <= 10:
+                self.warmup(frame)
             self.warmup(frame)
             return FrameResult(
                 centroids=[],

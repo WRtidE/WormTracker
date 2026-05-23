@@ -22,7 +22,7 @@ from wormtracker.config import WormTrackerConfig, get_config, load_config, save_
 from wormtracker.engine.base import BaseEngine
 from wormtracker.engine.mog2 import MOG2Engine
 from wormtracker.ui.thread import VideoThread
-from wormtracker.ui.styles import APP_STYLESHEET
+from wormtracker.ui.styles import APP_STYLESHEET, APP_STYLESHEET_LIGHT
 
 
 class WormCounterApp(QMainWindow):
@@ -40,9 +40,10 @@ class WormCounterApp(QMainWindow):
     def __init__(self, config: Optional[WormTrackerConfig] = None):
         super().__init__()
         self.config = config or get_config()
-        self.setWindowTitle("WormTrack — 自动化线虫计数系统 v1.0")
+        self.setWindowTitle("WormTracker — 自动化线虫计数系统 v1.0")
         self.setMinimumSize(750, 550)
-        self.setStyleSheet(APP_STYLESHEET)
+        self.setStyleSheet(APP_STYLESHEET_LIGHT)
+        self._is_dark = False
 
         # 运行时状态
         self.thread: Optional[VideoThread] = None
@@ -54,6 +55,8 @@ class WormCounterApp(QMainWindow):
         )
         self.preview_frame: Optional[np.ndarray] = None
         self.last_main_frame: Optional[np.ndarray] = None
+        self.last_mask_frame: Optional[np.ndarray] = None
+        self._show_recognition_view = False
 
         self._build_ui()
         self._reset_ui()
@@ -74,8 +77,8 @@ class WormCounterApp(QMainWindow):
         self.video_label = QLabel("等待导入实验视频...\n(请从右侧面板选择视频文件)")
         self.video_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.video_label.setStyleSheet(
-            "background-color: #11111b; color: #585b70; font-size: 20px; "
-            "font-weight: bold; border: 2px dashed #45475a; border-radius: 12px;"
+            "background-color: #E8E3DA; color: #968B81; font-size: 20px; "
+            "font-weight: bold; border: 2px dashed #CCC3B5; border-radius: 12px;"
         )
         self.video_label.setSizePolicy(
             QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Ignored
@@ -94,6 +97,28 @@ class WormCounterApp(QMainWindow):
         self.setStatusBar(self.statusBar)
         self.statusBar.showMessage("✅ 系统就绪，请先选择实验视频。")
 
+        # 主题切换按钮 (状态栏右侧)
+        self.btn_theme = QPushButton("🌓")
+        self.btn_theme.setToolTip("切换浅色/暗色主题")
+        self.btn_theme.clicked.connect(self._toggle_theme)
+        self.btn_theme.setStyleSheet(
+            "QPushButton { background: transparent; border: none; font-size: 14px;"
+            "  padding: 1px 4px; }"
+            "QPushButton:hover { background-color: #D9D1C5; border-radius: 4px; }"
+        )
+        self.statusBar.addPermanentWidget(self.btn_theme)
+
+        # 识别视角切换按钮
+        self.btn_view = QPushButton("🔍")
+        self.btn_view.setToolTip("切换识别视角 (查看模型检测到的前景/运动区域)")
+        self.btn_view.clicked.connect(self._toggle_recognition_view)
+        self.btn_view.setStyleSheet(
+            "QPushButton { background: transparent; border: none; font-size: 14px;"
+            "  padding: 1px 4px; }"
+            "QPushButton:hover { background-color: #D9D1C5; border-radius: 4px; }"
+        )
+        self.statusBar.addPermanentWidget(self.btn_view)
+
     def _build_tab_workbench(self) -> QWidget:
         tab = QWidget()
         layout = QVBoxLayout(tab)
@@ -103,10 +128,10 @@ class WormCounterApp(QMainWindow):
         ctrl_group = QGroupBox("🚀 系统控制")
         ctrl_layout = QVBoxLayout(ctrl_group)
 
-        self.btn_open = self._create_btn("📂 选择实验视频", "#89b4fa", "#11111b")
+        self.btn_open = self._create_btn("📂 选择实验视频", "#6B8BAE", "#FFFFFF")
         self.btn_open.clicked.connect(self._open_video)
         self.btn_main_action = self._create_btn(
-            "▶ 请先导入视频", "#313244", "#a6adc8"
+            "▶ 请先导入视频", "#D9D1C5", "#968B81"
         )
         self.btn_main_action.clicked.connect(self._handle_main_action)
         self.btn_main_action.setEnabled(False)
@@ -124,8 +149,8 @@ class WormCounterApp(QMainWindow):
         self.total_lcd.setFixedHeight(60)
         self.total_lcd.setSegmentStyle(QLCDNumber.SegmentStyle.Flat)
         self.total_lcd.setStyleSheet(
-            "color: #a6e3a1; background-color: #11111b; "
-            "border: 2px solid #313244; border-radius: 8px;"
+            "color: #6B9F6E; background-color: #E8E3DA; "
+            "border: 2px solid #D9D1C5; border-radius: 8px;"
         )
 
         self.table = QTableWidget(len(self.labels), 2)
@@ -136,28 +161,30 @@ class WormCounterApp(QMainWindow):
         self.table.verticalHeader().setVisible(False)
         self.table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
 
-        data_layout.addWidget(QLabel(
-            "<center style='color:#a6adc8; font-size:11px;'>TOTAL WORM COUNT</center>"
-        ))
+        self._label_total_header = QLabel(
+            "<center style='color:#968B81; font-size:11px;'>TOTAL WORM COUNT</center>"
+        )
+        self._label_dist_header = QLabel(
+            "<center style='color:#968B81; font-size:11px;'>CHANNEL DISTRIBUTION</center>"
+        )
+        data_layout.addWidget(self._label_total_header)
         data_layout.addWidget(self.total_lcd)
-        data_layout.addWidget(QLabel(
-            "<center style='color:#a6adc8; font-size:11px;'>CHANNEL DISTRIBUTION</center>"
-        ))
+        data_layout.addWidget(self._label_dist_header)
         data_layout.addWidget(self.table)
         layout.addWidget(data_group, stretch=1)
 
         # 完成面板
         self.finish_group = QGroupBox("✅ 分析完成")
         self.finish_group.setStyleSheet(
-            "QGroupBox { border-color: #a6e3a1; color: #a6e3a1; }"
+            "QGroupBox { border-color: #6B9F6E; color: #6B9F6E; }"
         )
         finish_layout = QVBoxLayout(self.finish_group)
         self.btn_export = self._create_btn(
-            "📊 导出 Excel 报告", "#a6e3a1", "#11111b"
+            "📊 导出 Excel 报告", "#6B9F6E", "#FFFFFF"
         )
         self.btn_export.clicked.connect(self._export_results)
         self.btn_export_save_config = self._create_btn(
-            "💾 保存当前配置", "#89b4fa", "#11111b"
+            "💾 保存当前配置", "#6B8BAE", "#FFFFFF"
         )
         self.btn_export_save_config.clicked.connect(self._save_config_dialog)
         finish_layout.addWidget(self.btn_export)
@@ -198,11 +225,21 @@ class WormCounterApp(QMainWindow):
 
         max_val = max(values) if max(values) > 0 else 1
 
-        # 暗色主题
+        # 主题自适应
+        d = self._is_dark
+        fig_bg   = "#1e1e2e" if d else "#F0ECE5"
+        ax_bg    = "#11111b" if d else "#EDE8E0"
+        edge_c   = "#313244" if d else "#D9D1C5"
+        text_c   = "#cdd6f4" if d else "#5C534A"
+        label_c  = "#a6adc8" if d else "#968B81"
+        title_c  = "#a6e3a1" if d else "#6B9F6E"
+        spine_c  = "#45475a" if d else "#CCC3B5"
+        grid_c   = "#313244" if d else "#D9D1C5"
+
         fig = Figure(figsize=(8, 5), dpi=100)
-        fig.patch.set_facecolor("#1e1e2e")
+        fig.patch.set_facecolor(fig_bg)
         ax = fig.add_subplot(111)
-        ax.set_facecolor("#11111b")
+        ax.set_facecolor(ax_bg)
 
         # 渐变色柱状图 (绿→黄)
         colors = []
@@ -213,7 +250,7 @@ class WormCounterApp(QMainWindow):
             b = int(100 * (1 - ratio))
             colors.append(f"#{r:02x}{g:02x}{b:02x}")
 
-        bars = ax.bar(range(len(values)), values, color=colors, edgecolor="#313244", linewidth=0.5)
+        bars = ax.bar(range(len(values)), values, color=colors, edgecolor=edge_c, linewidth=0.5)
 
         # 数值标签
         for bar, val in zip(bars, values):
@@ -222,22 +259,22 @@ class WormCounterApp(QMainWindow):
                     bar.get_x() + bar.get_width() / 2,
                     bar.get_height() + max_val * 0.03,
                     str(val), ha="center", va="bottom",
-                    fontsize=8, color="#cdd6f4", fontweight="bold",
+                    fontsize=8, color=text_c, fontweight="bold",
                 )
 
         ax.set_xticks(range(len(values)))
         xticks_rotation = 45 if len(values) > 16 else 0
         ax.set_xticklabels(channel_names, rotation=xticks_rotation,
                            ha="right" if xticks_rotation else "center", fontsize=7)
-        ax.set_ylabel("线虫数量", color="#a6adc8", fontsize=9)
+        ax.set_ylabel("线虫数量", color=label_c, fontsize=9)
         ax.set_title(f"各通道线虫计数  |  总计: {total} 条  |  峰值通道: CH-{sorted_labels[values.index(max_val)]:02d}",
-                     color="#a6e3a1", fontsize=12, fontweight="bold", pad=10)
-        ax.tick_params(colors="#a6adc8", labelsize=7)
+                     color=title_c, fontsize=12, fontweight="bold", pad=10)
+        ax.tick_params(colors=label_c, labelsize=7)
         ax.spines["top"].set_visible(False)
         ax.spines["right"].set_visible(False)
-        ax.spines["bottom"].set_color("#45475a")
-        ax.spines["left"].set_color("#45475a")
-        ax.yaxis.grid(True, color="#313244", linewidth=0.5, alpha=0.7)
+        ax.spines["bottom"].set_color(spine_c)
+        ax.spines["left"].set_color(spine_c)
+        ax.yaxis.grid(True, color=grid_c, linewidth=0.5, alpha=0.7)
         ax.set_axisbelow(True)
 
         fig.tight_layout(pad=1.5)
@@ -315,16 +352,16 @@ class WormCounterApp(QMainWindow):
 
         layout.addWidget(param_group)
 
-        tips_label = QLabel(
+        self._tips_label = QLabel(
             "💡 提示：在【暂停】或【未开始】时，\n"
             "修改高度可直接在画面预览检测线位置。\n"
             "更改通道数量将实时重置表格。"
         )
-        tips_label.setStyleSheet(
-            "color: #89b4fa; font-weight: normal; line-height: 1.5;"
+        self._tips_label.setStyleSheet(
+            "color: #6B8BAE; font-weight: normal; line-height: 1.5;"
         )
-        tips_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        layout.addWidget(tips_label)
+        self._tips_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(self._tips_label)
         layout.addStretch(1)
 
         return tab
@@ -341,10 +378,153 @@ class WormCounterApp(QMainWindow):
             btn.setStyleSheet(
                 f"QPushButton {{ background-color: {bg_color}; color: {text_color}; }} "
                 f"QPushButton:hover {{ filter: brightness(110%); border: 1px solid white; }} "
-                f"QPushButton:disabled {{ background-color: #181825; color: #585b70; "
-                f"border: 1px solid #313244; }}"
+                f"QPushButton:disabled {{ {self._disabled_style()} }}"
             )
         return btn
+
+    # ── 主题切换 ──────────────────────────────────────
+
+    def _disabled_style(self) -> str:
+        if self._is_dark:
+            return "background-color: #181825; color: #585b70; border: 1px solid #313244;"
+        return "background-color: #EDE8E0; color: #B8AFA6; border: 1px solid #D9D1C5;"
+
+    def _toggle_theme(self) -> None:
+        self._apply_theme(not self._is_dark)
+
+    def _toggle_recognition_view(self) -> None:
+        """切换识别视角"""
+        self._show_recognition_view = not self._show_recognition_view
+        if self._show_recognition_view:
+            self.btn_view.setText("👁️")
+            self.statusBar.showMessage("🔍 识别视角：显示模型检测到的前景/运动区域")
+        else:
+            self.btn_view.setText("🔍")
+            self.statusBar.showMessage("✅ 系统就绪，请先选择实验视频。")
+        # 恢复最近一帧
+        if self.last_main_frame is not None:
+            self._show_latest_frame()
+
+    def _apply_theme(self, is_dark: bool) -> None:
+        self._is_dark = is_dark
+        self.setStyleSheet(APP_STYLESHEET if is_dark else APP_STYLESHEET_LIGHT)
+        self._refresh_theme_widgets()
+
+    def _refresh_theme_widgets(self) -> None:
+        """刷新所有内联样式控件"""
+        d = self._is_dark
+
+        # 视频占位区
+        bg = "#11111b" if d else "#E8E3DA"
+        fg = "#585b70" if d else "#968B81"
+        bd = "#45475a" if d else "#CCC3B5"
+        self.video_label.setStyleSheet(
+            f"background-color: {bg}; color: {fg}; font-size: 20px; "
+            f"font-weight: bold; border: 2px dashed {bd}; border-radius: 12px;"
+        )
+
+        # LCD 总数
+        lcd_color = "#a6e3a1" if d else "#6B9F6E"
+        lcd_bg = "#11111b" if d else "#E8E3DA"
+        lcd_border = "#313244" if d else "#D9D1C5"
+        self.total_lcd.setStyleSheet(
+            f"color: {lcd_color}; background-color: {lcd_bg}; "
+            f"border: 2px solid {lcd_border}; border-radius: 8px;"
+        )
+
+        # 完成面板边框
+        finish_color = "#a6e3a1" if d else "#6B9F6E"
+        self.finish_group.setStyleSheet(
+            f"QGroupBox {{ border-color: {finish_color}; color: {finish_color}; }}"
+        )
+
+        # 提示文字 (参数页)
+        if hasattr(self, "_tips_label"):
+            tip_color = "#89b4fa" if d else "#6B8BAE"
+            self._tips_label.setStyleSheet(
+                f"color: {tip_color}; font-weight: normal; line-height: 1.5;"
+            )
+
+        # 列头标签
+        header_color = "#a6adc8" if d else "#968B81"
+        if hasattr(self, "_label_total_header"):
+            self._label_total_header.setText(
+                f"<center style='color:{header_color}; font-size:11px;'>TOTAL WORM COUNT</center>"
+            )
+        if hasattr(self, "_label_dist_header"):
+            self._label_dist_header.setText(
+                f"<center style='color:{header_color}; font-size:11px;'>CHANNEL DISTRIBUTION</center>"
+            )
+
+        # 静态功能按钮
+        blue_bg  = "#89b4fa" if d else "#6B8BAE"
+        blue_txt = "#11111b" if d else "#FFFFFF"
+        green_bg  = "#a6e3a1" if d else "#6B9F6E"
+        green_txt = "#11111b" if d else "#FFFFFF"
+        gray_bg  = "#313244" if d else "#D9D1C5"
+        gray_txt = "#a6adc8" if d else "#968B81"
+
+        self.btn_open.setStyleSheet(
+            f"QPushButton {{ background-color: {blue_bg}; color: {blue_txt}; }} "
+            f"QPushButton:hover {{ filter: brightness(110%); border: 1px solid white; }} "
+            f"QPushButton:disabled {{ {self._disabled_style()} }}"
+        )
+        self.btn_export.setStyleSheet(
+            f"QPushButton {{ background-color: {green_bg}; color: {green_txt}; }} "
+            f"QPushButton:hover {{ filter: brightness(110%); border: 1px solid white; }} "
+            f"QPushButton:disabled {{ {self._disabled_style()} }}"
+        )
+        self.btn_export_save_config.setStyleSheet(
+            f"QPushButton {{ background-color: {blue_bg}; color: {blue_txt}; }} "
+            f"QPushButton:hover {{ filter: brightness(110%); border: 1px solid white; }} "
+            f"QPushButton:disabled {{ {self._disabled_style()} }}"
+        )
+
+        if not self.btn_main_action.isEnabled():
+            self.btn_main_action.setStyleSheet(
+                f"QPushButton {{ background-color: {gray_bg}; color: {gray_txt}; }} "
+                f"QPushButton:disabled {{ {self._disabled_style()} }}"
+            )
+
+        # 主操作按钮 (根据当前文字恢复对应样式)
+        self._refresh_main_action_btn()
+
+        # 主题按钮 hover
+        hover_bg = "#45475a" if d else "#D9D1C5"
+        for btn in [self.btn_theme, self.btn_view]:
+            btn.setStyleSheet(
+                "QPushButton { background: transparent; border: none; font-size: 14px;"
+                "  padding: 1px 4px; }"
+                f"QPushButton:hover {{ background-color: {hover_bg}; border-radius: 4px; }}"
+            )
+
+        # 图表 (如果正在显示)
+        if hasattr(self, "_result_canvas") and self._result_canvas is not None:
+            # 重建图表
+            if self.current_counts:
+                self._draw_chart(self.current_counts)
+
+    def _refresh_main_action_btn(self) -> None:
+        """根据按钮文字恢复主题匹配的内联样式"""
+        d = self._is_dark
+        text = self.btn_main_action.text()
+        if "继续" in text:
+            color = "#a6e3a1" if d else "#6B9F6E"
+            text_c = "#11111b" if d else "#FFFFFF"
+        elif "暂停" in text:
+            color = "#f9e2af" if d else "#C4844E"
+            text_c = "#11111b" if d else "#FFFFFF"
+        elif "重新分析" in text:
+            color = "#89b4fa" if d else "#6B8BAE"
+            text_c = "#11111b" if d else "#FFFFFF"
+        elif "开始识别" in text:
+            color = "#a6e3a1" if d else "#6B9F6E"
+            text_c = "#11111b" if d else "#FFFFFF"
+        else:
+            return
+        self.btn_main_action.setStyleSheet(
+            f"background-color: {color}; color: {text_c};"
+        )
 
     def _update_thread_param(self, key: str, value) -> None:
         if self.thread and self.thread.isRunning():
@@ -458,16 +638,12 @@ class WormCounterApp(QMainWindow):
         elif self.thread.isRunning() and not self.thread.is_paused:
             self.thread.toggle_pause()
             self.btn_main_action.setText("▶ 继续分析 (Space)")
-            self.btn_main_action.setStyleSheet(
-                "background-color: #a6e3a1; color: #11111b;"
-            )
+            self._refresh_main_action_btn()
             self.statusBar.showMessage("⏸ 分析已暂停，可切换到【参数调节】预览检测线。")
         elif self.thread.isRunning() and self.thread.is_paused:
             self.thread.toggle_pause()
             self.btn_main_action.setText("⏸ 暂停分析 (Space)")
-            self.btn_main_action.setStyleSheet(
-                "background-color: #f9e2af; color: #11111b;"
-            )
+            self._refresh_main_action_btn()
             self.statusBar.showMessage("▶️ 正在实时分析中...")
         self.setFocus()
 
@@ -494,9 +670,7 @@ class WormCounterApp(QMainWindow):
 
             self.btn_main_action.setEnabled(True)
             self.btn_main_action.setText("▶ 开始识别")
-            self.btn_main_action.setStyleSheet(
-                "background-color: #a6e3a1; color: #11111b;"
-            )
+            self._refresh_main_action_btn()
             self.statusBar.showMessage(
                 f"📂 已加载: {os.path.basename(file_name)}。"
                 "你可以切换到【参数调节】预览检测线高度。"
@@ -521,10 +695,7 @@ class WormCounterApp(QMainWindow):
         self.finish_group.hide()
 
         self.btn_main_action.setText("⏸ 暂停分析 (Space)")
-        self.btn_main_action.setStyleSheet(
-            "background-color: #f9e2af; color: #11111b;"
-        )
-
+        self._refresh_main_action_btn()
         # 创建 MOG2 引擎
         self.engine = MOG2Engine(self.config)
 
@@ -550,9 +721,7 @@ class WormCounterApp(QMainWindow):
     def _on_finished(self) -> None:
         self.btn_main_action.setEnabled(True)
         self.btn_main_action.setText("🔄 重新分析该视频")
-        self.btn_main_action.setStyleSheet(
-            "background-color: #89b4fa; color: #11111b;"
-        )
+        self._refresh_main_action_btn()
         self.finish_group.show()
 
         # 在视频区域展示结果图表
@@ -661,10 +830,33 @@ class WormCounterApp(QMainWindow):
             self.table.setItem(i, 1, item_count)
 
     def _update_frame(
-        self, main_frame: np.ndarray, _mask_frame: np.ndarray
+        self, main_frame: np.ndarray, mask_frame: np.ndarray
     ) -> None:
         self.last_main_frame = main_frame.copy()
-        self._display_frame(main_frame)
+        self.last_mask_frame = mask_frame.copy()
+        self._show_latest_frame()
+
+    def _show_latest_frame(self) -> None:
+        if self._show_recognition_view and self.last_mask_frame is not None:
+            self._display_frame(self._build_recognition_frame(self.last_mask_frame))
+        elif self.last_main_frame is not None:
+            self._display_frame(self.last_main_frame)
+
+    @staticmethod
+    def _build_recognition_frame(mask: np.ndarray) -> np.ndarray:
+        """将二值前景 mask 渲染为彩色识别视图
+
+        热点区 (白/灰) → 亮青绿色
+        静止区 (纯黑) → 暗蓝背景
+        """
+        norm = mask.astype(np.float32) / 255.0
+        # 热点 -> 荧光绿黄; 背景 -> 深蓝灰
+        h, w = mask.shape[:2]
+        out = np.zeros((h, w, 3), dtype=np.uint8)
+        out[:, :, 0] = (norm * 20).astype(np.uint8)         # B: 暗背景偏蓝
+        out[:, :, 1] = (norm * 240).astype(np.uint8)        # G: 热点亮绿
+        out[:, :, 2] = (norm * 160 + (1 - norm) * 15).astype(np.uint8)  # R: 热点偏黄
+        return out
 
     def _update_stats(self, counts: dict) -> None:
         self.current_counts = counts
@@ -674,7 +866,7 @@ class WormCounterApp(QMainWindow):
             item = self.table.item(i, 1)
             if item and item.text() != val:
                 item.setText(val)
-                item.setForeground(QColor("#a6e3a1"))
+                item.setForeground(QColor("#a6e3a1" if self._is_dark else "#6B9F6E"))
 
     def closeEvent(self, event) -> None:
         if self.thread:
