@@ -25,8 +25,18 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install opencv-python numpy pandas openpyxl pyyaml
-          pip install PyQt6 matplotlib
+          pip install PyQt6 matplotlib Pillow
           pip install pyinstaller
+
+      - name: Generate ICO from ICNS
+        shell: python
+        run: |
+          from PIL import Image
+          img = Image.open("icon.icns")
+          # 取最大尺寸的图层
+          sizes = [(256, 256), (128, 128), (64, 64), (48, 48), (32, 32), (16, 16)]
+          img.save("icon.ico", format="ICO", sizes=sizes)
+          print("icon.ico generated successfully")
 
       - name: Build EXE
         run: pyinstaller --clean wormtracker.spec
@@ -60,18 +70,23 @@ jobs:
       - name: Build APP
         run: pyinstaller --clean wormtracker.spec
 
-      - name: Package as DMG (optional)
+      - name: Package as DMG
         run: |
           if [ -d "dist/WormTracker.app" ]; then
-            cd dist
-            zip -r WormTracker-macOS.zip WormTracker.app
+            # 移除可能存在的旧 DMG
+            rm -f dist/WormTracker-macOS.dmg
+            # 创建 DMG，附加 .app 后弹出
+            hdiutil create -volname "WormTracker" \
+              -srcfolder dist/WormTracker.app \
+              -ov -format UDZO \
+              dist/WormTracker-macOS.dmg
           fi
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: WormTracker-macOS
-          path: dist/WormTracker-macOS.zip
+          path: dist/WormTracker-macOS.dmg
           if-no-files-found: error
 
   # ── 发布 Release (仅 tag 触发) ──────────────────────
@@ -90,6 +105,6 @@ jobs:
         with:
           files: |
             WormTracker-Windows/WormTracker.exe
-            WormTracker-macOS/WormTracker-macOS.zip
+            WormTracker-macOS/WormTracker-macOS.dmg
           draft: false
           generate_release_notes: true
