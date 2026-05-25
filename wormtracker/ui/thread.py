@@ -22,6 +22,7 @@ class VideoThread(QThread):
     # 信号
     change_pixmap_signal = pyqtSignal(np.ndarray, np.ndarray)
     update_counts_signal = pyqtSignal(dict)
+    progress_signal = pyqtSignal(int, int)
     finished_signal = pyqtSignal()
 
     def __init__(
@@ -37,6 +38,7 @@ class VideoThread(QThread):
 
         self.is_running = True
         self.is_paused = False
+        self._seek_target: int = -1
 
         # 可动态调参的字段
         self._dynamic_params: dict = {
@@ -56,6 +58,8 @@ class VideoThread(QThread):
             self.finished_signal.emit()
             return
 
+        total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+
         # 初始化计数器
         n_channels = self._dynamic_params["num_channels"]
         counts = {label: 0 for label in range(1, n_channels + 1)}
@@ -66,6 +70,20 @@ class VideoThread(QThread):
         panic_cooldown = 0
 
         while cap.isOpened() and self.is_running:
+            # ---- 处理跳转请求 ----
+            if self._seek_target >= 0:
+                cap.set(cv2.CAP_PROP_POS_FRAMES, self._seek_target)
+                frame_idx = self._seek_target
+                self._seek_target = -1
+                # 重置引擎状态，避免跳转后状态错乱
+                self.engine.reset()
+                cross_cooldown.clear()
+                counts = {label: 0 for label in counts}
+                base_channel_width = None
+                panic_cooldown = 0
+                self.progress_signal.emit(frame_idx, total_frames)
+                self.update_counts_signal.emit(counts)
+
             if self.is_paused:
                 QThread.msleep(50)
                 continue
@@ -75,6 +93,7 @@ class VideoThread(QThread):
                 break
 
             frame_idx += 1
+            self.progress_signal.emit(frame_idx, total_frames)
             is_panic_now = False
 
             # ---- 动态同步通道数量 ----
@@ -185,6 +204,14 @@ class VideoThread(QThread):
 
     def toggle_pause(self) -> None:
         self.is_paused = not self.is_paused
+
+    def seek_frame(self, frame_idx: int) -> None:
+        """跳转到指定帧 (仅在暂停时可用，通过外部 cap 引用实现)
+
+        注意：OpenCV 的 seek 精度有限，实际位置可能偏差 1-2 帧。
+        跳转后会重置引擎状态以避免状态错乱。
+        """
+        self._seek_target = frame_idx
 
     def stop(self) -> None:
         self.is_running = False

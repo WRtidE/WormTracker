@@ -71,6 +71,26 @@ QMessageBox QPushButton {
 }
 QMessageBox QPushButton:hover { background-color: #e5e7eb; }
 QMessageBox QPushButton:pressed { background-color: #d1d5db; }
+QSlider::groove:horizontal {
+    border: 1px solid #45475a; border-radius: 4px;
+    background-color: #11111b; height: 8px;
+}
+QSlider::sub-page:horizontal {
+    background-color: #a6e3a1; border-radius: 4px;
+}
+QSlider::add-page:horizontal {
+    background-color: #313244; border-radius: 4px;
+}
+QSlider::handle:horizontal {
+    background-color: #a6e3a1; border: 2px solid #585b70;
+    width: 16px; margin: -5px 0; border-radius: 8px;
+}
+QSlider::handle:horizontal:hover {
+    background-color: #94e2d5; border-color: #a6e3a1;
+}
+QSlider::handle:horizontal:disabled {
+    background-color: #585b70; border-color: #313244;
+}
 """
 
 APP_STYLESHEET_LIGHT = """
@@ -144,4 +164,24 @@ QMessageBox QPushButton {
 }
 QMessageBox QPushButton:hover { background-color: #e5e7eb; }
 QMessageBox QPushButton:pressed { background-color: #d1d5db; }
+QSlider::groove:horizontal {
+    border: 1px solid #CCC3B5; border-radius: 4px;
+    background-color: #E8E3DA; height: 8px;
+}
+QSlider::sub-page:horizontal {
+    background-color: #6B9F6E; border-radius: 4px;
+}
+QSlider::add-page:horizontal {
+    background-color: #D9D1C5; border-radius: 4px;
+}
+QSlider::handle:horizontal {
+    background-color: #6B9F6E; border: 2px solid #BEB4A5;
+    width: 16px; margin: -5px 0; border-radius: 8px;
+}
+QSlider::handle:horizontal:hover {
+    background-color: #5A8F5E; border-color: #6B9F6E;
+}
+QSlider::handle:horizontal:disabled {
+    background-color: #B8AFA6; border-color: #D9D1C5;
+}
 """

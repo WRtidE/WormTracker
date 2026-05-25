@@ -13,7 +13,7 @@ from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QLabel, QVBoxLayout, QHBoxLayout,
     QLCDNumber, QTableWidget, QTableWidgetItem, QHeaderView, QSizePolicy,
     QPushButton, QFileDialog, QMessageBox, QGroupBox, QStatusBar, QFormLayout,
-    QSpinBox, QDoubleSpinBox, QTabWidget,
+    QSpinBox, QDoubleSpinBox, QTabWidget, QSlider,
 )
 from PyQt6.QtGui import QImage, QPixmap, QColor
 from PyQt6.QtCore import Qt
@@ -84,6 +84,21 @@ class WormCounterApp(QMainWindow):
             QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Ignored
         )
         self.video_container.addWidget(self.video_label)
+
+        # 视频进度条
+        self.progress_slider = QSlider(Qt.Orientation.Horizontal)
+        self.progress_slider.setMinimum(0)
+        self.progress_slider.setMaximum(0)
+        self.progress_slider.setValue(0)
+        self.progress_slider.setEnabled(False)
+        self.progress_slider.setToolTip("视频分析进度")
+        self.progress_slider.sliderPressed.connect(self._on_slider_pressed)
+        self.progress_slider.sliderReleased.connect(self._on_slider_released)
+        self.progress_slider.valueChanged.connect(self._on_slider_value_changed)
+        self._slider_dragging = False
+        self._slider_seek_target = -1
+        self.video_container.addWidget(self.progress_slider)
+
         main_layout.addLayout(self.video_container, stretch=7)
 
         # ---- 右侧: 标签页 ----
@@ -196,6 +211,12 @@ class WormCounterApp(QMainWindow):
 
     def _draw_chart(self, counts: dict) -> None:
         """在视频预览区展示结果柱状图"""
+        # 先移除旧图表，防止重复叠加
+        if hasattr(self, "_result_canvas") and self._result_canvas is not None:
+            self._result_canvas.hide()
+            self.video_container.removeWidget(self._result_canvas)
+            self._result_canvas.setParent(None)
+            self._result_canvas = None
 
         # ── 延迟导入 matplotlib (首次显示图表时才加载，加快启动速度) ──
         import matplotlib
@@ -632,6 +653,31 @@ class WormCounterApp(QMainWindow):
     # 动作处理
     # ==========================================================
 
+    def _on_slider_pressed(self) -> None:
+        """用户开始拖拽进度条"""
+        self._slider_dragging = True
+
+    def _on_slider_released(self) -> None:
+        """用户释放进度条 — 暂停状态下允许跳转"""
+        self._slider_dragging = False
+        if self._slider_seek_target >= 0:
+            if self.thread and self.thread.isRunning() and self.thread.is_paused:
+                self.thread.seek_frame(self._slider_seek_target)
+            self._slider_seek_target = -1
+
+    def _on_slider_value_changed(self, value: int) -> None:
+        """进度条值变化 (拖拽或程序更新)"""
+        if self._slider_dragging:
+            self._slider_seek_target = value
+
+    def _update_progress(self, current: int, total: int) -> None:
+        """从线程接收进度更新"""
+        if not self._slider_dragging:
+            self.progress_slider.blockSignals(True)
+            self.progress_slider.setMaximum(total)
+            self.progress_slider.setValue(current)
+            self.progress_slider.blockSignals(False)
+
     def _handle_main_action(self) -> None:
         if self.thread is None or not self.thread.isRunning():
             self._start_analysis()
@@ -711,9 +757,13 @@ class WormCounterApp(QMainWindow):
 
         self.thread.change_pixmap_signal.connect(self._update_frame)
         self.thread.update_counts_signal.connect(self._update_stats)
+        self.thread.progress_signal.connect(self._update_progress)
         self.thread.finished_signal.connect(self._on_finished)
         self.thread.start()
 
+        self.progress_slider.setEnabled(True)
+        self.progress_slider.setValue(0)
+        self.progress_slider.show()
         self.tabs.setCurrentIndex(0)
         self.statusBar.showMessage("▶️ 正在实时分析中...")
         self.setFocus()
@@ -723,6 +773,8 @@ class WormCounterApp(QMainWindow):
         self.btn_main_action.setText("🔄 重新分析该视频")
         self._refresh_main_action_btn()
         self.finish_group.show()
+        self.progress_slider.setValue(self.progress_slider.maximum())
+        self.progress_slider.hide()
 
         # 在视频区域展示结果图表
         if self.current_counts:
@@ -819,6 +871,9 @@ class WormCounterApp(QMainWindow):
 
     def _reset_ui(self) -> None:
         self.total_lcd.display(0)
+        self.progress_slider.setValue(0)
+        self.progress_slider.setMaximum(0)
+        self.progress_slider.setEnabled(False)
         self.current_counts = {label: 0 for label in self.labels}
         self.table.setRowCount(len(self.labels))
         for i, label in enumerate(self.labels):
