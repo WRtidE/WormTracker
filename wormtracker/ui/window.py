@@ -69,16 +69,56 @@ class WormCounterApp(QMainWindow):
 
     @staticmethod
     def _setup_matplotlib_fonts() -> None:
-        """程序级一次性设置 matplotlib CJK 字体及后端。"""
+        """程序级一次性设置 matplotlib CJK 字体及后端。
+
+        按平台优先级检测可用中文字体：
+        - Windows: Microsoft YaHei / SimHei / SimSun / KaiTi
+        - macOS:   PingFang HK / Heiti TC / STHeiti / Arial Unicode MS
+        - Linux:   Noto Sans CJK SC / WenQuanYi Micro Hei
+        兜底: 尝试通过 font_manager 搜索系统内任意 CJK 字体文件
+        """
         import matplotlib
         matplotlib.use("QtAgg")
         import matplotlib.font_manager as fm
+
         _avail = {f.name for f in fm.fontManager.ttflist}
-        _candidates = ['PingFang HK', 'Heiti TC', 'STHeiti',
-                       'Arial Unicode MS', 'DejaVu Sans']
+
+        _candidates = [
+            # Windows
+            'Microsoft YaHei', 'SimHei', 'SimSun', 'KaiTi',
+            # macOS
+            'PingFang HK', 'Heiti TC', 'STHeiti', 'Arial Unicode MS',
+            # Linux
+            'Noto Sans CJK SC', 'WenQuanYi Micro Hei',
+            'Noto Sans SC', 'Source Han Sans SC',
+        ]
         _for_use = [f for f in _candidates if f in _avail]
+
+        if not _for_use:
+            # 兜底: 扫描系统字体目录找任意 CJK 字体
+            import os, glob
+            _system_ttf: list[str] = []
+            for _d in fm.OSXFontDirectories if hasattr(fm, 'OSXFontDirectories') else []:
+                _system_ttf.extend(glob.glob(os.path.join(_d, '*.ttf')) + glob.glob(os.path.join(_d, '*.otf')))
+            if not _system_ttf:
+                _win_font_dirs = [
+                    os.path.join(os.environ.get('WINDIR', 'C:\\Windows'), 'Fonts'),
+                    os.path.join(os.environ.get('LOCALAPPDATA', ''), 'Microsoft\\Windows\\Fonts'),
+                ]
+                for _d in _win_font_dirs:
+                    if os.path.isdir(_d):
+                        _system_ttf.extend(glob.glob(os.path.join(_d, '*.ttf')) + glob.glob(os.path.join(_d, '*.otf')))
+            for _fp in _system_ttf:
+                try:
+                    _fn = fm.FontEntry(fname=_fp).name
+                    fm.fontManager.addfont(_fp)
+                    _avail.add(_fn)
+                except Exception:
+                    pass
+            _for_use = [f for f in _candidates if f in _avail]
+
         if _for_use:
-            matplotlib.rcParams['font.sans-serif'] = _for_use
+            matplotlib.rcParams['font.sans-serif'] = _for_use + matplotlib.rcParams['font.sans-serif']
             matplotlib.rcParams['axes.unicode_minus'] = False
             fm._load_fontmanager(try_read_cache=False)
 
@@ -841,7 +881,11 @@ class WormCounterApp(QMainWindow):
                 with pd.ExcelWriter(save_path, engine="openpyxl") as writer:
                     # 将视频名称和生成时间作为表头信息写入"计数结果"表
                     import openpyxl
+                    from openpyxl.styles import Font, Alignment, PatternFill, Border, Side
                     from openpyxl.utils import get_column_letter
+
+                    # 跨平台中文兼容字体 (Windows 微软雅黑 / macOS PingFang)
+                    _cn_font_name = "Microsoft YaHei"  # Excel 回退机制，Windows 首选
 
                     def _auto_width(ws, min_width=10, max_width=50):
                         """根据内容自适应列宽，中文字符按 2 倍宽度计算"""
@@ -856,18 +900,39 @@ class WormCounterApp(QMainWindow):
                             adjusted = max(min_width, min(max_len + 3, max_width))
                             ws.column_dimensions[col_letter].width = adjusted
 
+                    def _apply_cn_font(ws, start_row=1):
+                        """对工作表中所有非空单元格应用中文字体"""
+                        cn_font = Font(name=_cn_font_name, size=11)
+                        for row in ws.iter_rows(min_row=start_row):
+                            for cell in row:
+                                if cell.value is not None:
+                                    cell.font = cn_font
+
+                    # 计数结果 sheet
                     df.to_excel(writer, index=False, sheet_name="计数结果", startrow=3)
                     ws = writer.sheets["计数结果"]
+
+                    # 表头信息
                     ws["A1"] = "视频名称"
                     ws["B1"] = video_name
                     ws["A2"] = "生成时间"
                     ws["B2"] = gen_time
-                    # 设置表头信息样式
-                    ws["A1"].font = openpyxl.styles.Font(bold=True, color="333333")
-                    ws["A2"].font = openpyxl.styles.Font(bold=True, color="333333")
+                    header_font = Font(name=_cn_font_name, size=11, bold=True, color="333333")
+                    ws["A1"].font = header_font
+                    ws["A2"].font = header_font
+                    ws["B1"].font = Font(name=_cn_font_name, size=11)
+                    ws["B2"].font = Font(name=_cn_font_name, size=11)
+
+                    # 第4行的列标题使用加粗中文字体
+                    col_header_font = Font(name=_cn_font_name, size=11, bold=True)
+                    for col_idx in range(1, 3):
+                        cell = ws.cell(row=4, column=col_idx)
+                        cell.font = col_header_font
+
+                    _apply_cn_font(ws, start_row=5)  # 数据行
                     _auto_width(ws)
 
-                    # 实验信息表
+                    # 实验信息 sheet
                     pd.DataFrame({
                         "项目": ["视频名称", "生成时间", "检测后端"],
                         "内容": [
@@ -876,7 +941,15 @@ class WormCounterApp(QMainWindow):
                             self.config.backend.upper(),
                         ],
                     }).to_excel(writer, index=False, sheet_name="实验信息")
-                    _auto_width(writer.sheets["实验信息"])
+                    ws2 = writer.sheets["实验信息"]
+
+                    # 列标题加粗
+                    for col_idx in range(1, 3):
+                        cell = ws2.cell(row=1, column=col_idx)
+                        cell.font = Font(name=_cn_font_name, size=11, bold=True)
+
+                    _apply_cn_font(ws2, start_row=2)
+                    _auto_width(ws2)
 
                 self.statusBar.showMessage(f"💾 报告已成功导出至: {save_path}")
                 QMessageBox.information(self, "导出成功", "Excel 报表已生成！")
