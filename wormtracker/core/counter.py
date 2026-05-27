@@ -29,8 +29,11 @@ def count_crossings(
         cross_debounce: 越线后冷却帧数
 
     Returns:
-        (counts_dict, cross_cooldown)
+        (counts_dict, cross_cooldown, crossing_channels)
+        crossing_channels: 本帧发生穿越的通道 ID 集合
     """
+    crossing_channels = set()
+
     for wid, history in active_worms.items():
         if len(history) < 2:
             continue
@@ -54,5 +57,6 @@ def count_crossings(
 
             counts_dict[found_channel] += 1
             cross_cooldown[wid] = cross_debounce
+            crossing_channels.add(found_channel)
 
-    return counts_dict, cross_cooldown
+    return counts_dict, cross_cooldown, crossing_channels

@@ -27,7 +27,8 @@ class WormTrackerConfig:
     num_channels: int = 32
     x_margin_left: float = 0.05
     x_margin_right: float = 0.15
-    wall_ratio: float = 0.0
+    wall_ratio: float = 0.08
+    wall_refine: bool = True
 
     # ---- 检测判定 ----
     tripwire_ratio: float = 0.65
@@ -37,20 +38,24 @@ class WormTrackerConfig:
     mask_bottom_ratio: float = 0.85
 
     # ---- MOG2 背景建模 ----
-    bg_history: int = 500
+    bg_history: int = 200  # 降低以更快遗忘初始帧中的静止物体
     var_threshold: int = 16
-    init_frame_index: int = 60
+    init_frame_index: int = 20  # 预热帧数 (降低以更早开始检测)
 
     # ---- 追踪策略 (MOG2) ----
     max_dist_x: int = 25
     max_dist_y: int = 300
     track_history_len: int = 100
-    cross_debounce: int = 20
+    cross_debounce: int = 10
 
     # ---- 熔断保护 (MOG2) ----
     panic_noise_ratio: float = 0.015
     grid_mutation_tolerance: float = 0.15
     cooldown_frames: int = 30
+
+    # ---- 墙壁遮罩 ----
+    wall_mask_margin: int = 3  # 墙壁向内侵蚀像素，防止光照变化导致墙壁伪影
+    wall_peak_half_width: int = 15  # 峰值精修模式下墙壁红线半宽 (px)，全宽 = half_width * 2
 
     # ---- 输出 ----
     export_format: str = "xlsx"  # "xlsx" | "csv"

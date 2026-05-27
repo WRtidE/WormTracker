@@ -47,6 +47,7 @@ class VideoThread(QThread):
             "min_area": self.config.min_area,
             "mask_top_ratio": self.config.mask_top_ratio,
             "mask_bottom_ratio": self.config.mask_bottom_ratio,
+            "wall_peak_half_width": self.config.wall_peak_half_width,
         }
 
     def update_param(self, key: str, value) -> None:
@@ -104,11 +105,14 @@ class VideoThread(QThread):
 
             # ---- 1. 网格计算 & 熔断探针 ----
             try:
+                self.config.wall_peak_half_width = self._dynamic_params["wall_peak_half_width"]
                 grid_data = get_interpolated_grid(
                     frame,
                     current_channels,
                     (self.config.x_margin_left, self.config.x_margin_right),
                     wall_ratio=self.config.wall_ratio,
+                    refine_walls=self.config.wall_refine,
+                    wall_peak_half_width=self.config.wall_peak_half_width,
                 )
 
                 if (
@@ -135,6 +139,7 @@ class VideoThread(QThread):
             # ---- 2. 引擎处理 ----
             raw_fg = None
             active_worms = {}
+            crossing_channels = frozenset()
 
             if frame_idx <= self.config.init_frame_index:
                 self.engine.warmup(frame)
@@ -145,12 +150,14 @@ class VideoThread(QThread):
                 self.config.min_area = self._dynamic_params["min_area"]
                 self.config.mask_top_ratio = self._dynamic_params["mask_top_ratio"]
                 self.config.mask_bottom_ratio = self._dynamic_params["mask_bottom_ratio"]
+                self.config.wall_peak_half_width = self._dynamic_params["wall_peak_half_width"]
 
                 result = self.engine.process_frame(
                     frame, frame_idx, grid_data, counts, cross_cooldown
                 )
                 active_worms = result.active_worms
                 raw_fg = result.raw_fg
+                crossing_channels = result.crossing_channels
                 if result.is_panic:
                     is_panic_now = True
 
@@ -176,6 +183,7 @@ class VideoThread(QThread):
                     active_worms, tripwire_y,
                     raw_fg,
                     mask_top=mask_top_y, mask_bottom=mask_bottom_y,
+                    crossing_channels=crossing_channels,
                 )
             else:
                 display_frame = draw_dashboard(
@@ -193,6 +201,8 @@ class VideoThread(QThread):
                 raw_fg if raw_fg is not None
                 else np.zeros(frame.shape[:2], dtype=np.uint8)
             )
+            # 注：raw_fg 已在 MOG2._detect 中完成了墙壁遮罩 + Y轴遮罩，
+            # 此处无需重复处理，直接传给 UI 的识别视角即可。
             self.change_pixmap_signal.emit(display_frame.copy(), mask_frame.copy())
             self.update_counts_signal.emit(counts)
 

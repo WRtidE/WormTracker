@@ -21,6 +21,7 @@ class FrameResult:
     raw_fg: Optional[np.ndarray] = None      # 原始前景 (MOG2 用于缩略图)
     noise_ratio: float = 0.0                 # 全局噪点比例
     is_panic: bool = False                   # 是否触发熔断
+    crossing_channels: frozenset = frozenset()  # 本帧穿越 tripwire 的通道 ID
 
 
 class BaseEngine(ABC):

@@ -16,8 +16,9 @@ from PyQt6.QtWidgets import (
     QSpinBox, QDoubleSpinBox, QTabWidget, QSlider,
 )
 from PyQt6.QtGui import QImage, QPixmap, QColor
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import Qt, QTimer
 
+from wormtracker import __version__
 from wormtracker.config import WormTrackerConfig, get_config, load_config, save_config
 from wormtracker.engine.base import BaseEngine
 from wormtracker.engine.mog2 import MOG2Engine
@@ -37,13 +38,17 @@ class WormCounterApp(QMainWindow):
     def _from_display(display: float) -> float:
         return round(1.0 - display, 4)
 
-    def __init__(self, config: Optional[WormTrackerConfig] = None):
+    def __init__(self, config: Optional[WormTrackerConfig] = None, config_path: Optional[str] = None):
         super().__init__()
         self.config = config or get_config()
-        self.setWindowTitle("WormTracker — 自动化线虫计数系统 v1.0")
+        self.config_path = config_path  # 当前使用的配置文件路径
+        self.setWindowTitle(f"WormTracker — 自动化线虫计数系统 v{__version__}")
         self.setMinimumSize(750, 550)
         self.setStyleSheet(APP_STYLESHEET_LIGHT)
         self._is_dark = False
+
+        # ── 全局 matplotlib CJK 字体 (程序级一次设置) ──
+        self._setup_matplotlib_fonts()
 
         # 运行时状态
         self.thread: Optional[VideoThread] = None
@@ -57,9 +62,25 @@ class WormCounterApp(QMainWindow):
         self.last_main_frame: Optional[np.ndarray] = None
         self.last_mask_frame: Optional[np.ndarray] = None
         self._show_recognition_view = False
+        self._resize_timer: Optional[QTimer] = None
 
         self._build_ui()
         self._reset_ui()
+
+    @staticmethod
+    def _setup_matplotlib_fonts() -> None:
+        """程序级一次性设置 matplotlib CJK 字体及后端。"""
+        import matplotlib
+        matplotlib.use("QtAgg")
+        import matplotlib.font_manager as fm
+        _avail = {f.name for f in fm.fontManager.ttflist}
+        _candidates = ['PingFang HK', 'Heiti TC', 'STHeiti',
+                       'Arial Unicode MS', 'DejaVu Sans']
+        _for_use = [f for f in _candidates if f in _avail]
+        if _for_use:
+            matplotlib.rcParams['font.sans-serif'] = _for_use
+            matplotlib.rcParams['axes.unicode_minus'] = False
+            fm._load_fontmanager(try_read_cache=False)
 
     # ==========================================================
     # UI 构建
@@ -151,8 +172,14 @@ class WormCounterApp(QMainWindow):
         self.btn_main_action.clicked.connect(self._handle_main_action)
         self.btn_main_action.setEnabled(False)
 
+        self.btn_restart = self._create_btn("🔄 重新分析", "#E8A87C", "#FFFFFF")
+        self.btn_restart.clicked.connect(self._restart_analysis)
+        self.btn_restart.setEnabled(False)
+        self.btn_restart.hide()
+
         ctrl_layout.addWidget(self.btn_open)
         ctrl_layout.addWidget(self.btn_main_action)
+        ctrl_layout.addWidget(self.btn_restart)
         layout.addWidget(ctrl_group)
 
         # 实时数据
@@ -219,23 +246,6 @@ class WormCounterApp(QMainWindow):
             self._result_canvas = None
 
         # ── 延迟导入 matplotlib (首次显示图表时才加载，加快启动速度) ──
-        import matplotlib
-        matplotlib.use("QtAgg")
-        import matplotlib.font_manager as fm
-        import platform as _plat
-        _sys = _plat.system()
-        if _sys == "Darwin":
-            _candidate_fonts = ['PingFang HK', 'Songti SC', 'STHeiti', 'Heiti TC', 'Apple LiGothic']
-        elif _sys == "Windows":
-            _candidate_fonts = ['Microsoft YaHei', 'SimHei', 'SimSun', 'KaiTi', 'FangSong']
-        else:
-            _candidate_fonts = ['WenQuanYi Micro Hei', 'Noto Sans CJK SC', 'DejaVu Sans']
-        _available = {f.name for f in fm.fontManager.ttflist}
-        _for_use = [f for f in _candidate_fonts if f in _available]
-        if _for_use:
-            matplotlib.rcParams['font.sans-serif'] = _for_use + ['DejaVu Sans']
-            matplotlib.rcParams['axes.unicode_minus'] = False
-            fm._load_fontmanager(try_read_cache=False)
         from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
         from matplotlib.figure import Figure
 
@@ -325,14 +335,6 @@ class WormCounterApp(QMainWindow):
         param_layout = QFormLayout(param_group)
         param_layout.setLabelAlignment(Qt.AlignmentFlag.AlignRight)
 
-        # 通道数量
-        self.spin_channels = QSpinBox()
-        self.spin_channels.setFixedHeight(40)
-        self.spin_channels.setRange(1, 100)
-        self.spin_channels.setValue(self.config.num_channels)
-        self.spin_channels.valueChanged.connect(self._on_channels_changed)
-        param_layout.addRow("微流控通道数量:", self.spin_channels)
-
         # 检测线高度 (显示为距顶部百分比，越大越靠上)
         self.spin_tripwire = QDoubleSpinBox()
         self.spin_tripwire.setFixedHeight(40)
@@ -360,6 +362,17 @@ class WormCounterApp(QMainWindow):
         self.spin_mask_bottom.valueChanged.connect(self._on_mask_changed)
         param_layout.addRow("Mask 下界 (屏蔽下方):", self.spin_mask_bottom)
 
+        # 墙壁遮罩半宽
+        self.spin_wall_hw = QSpinBox()
+        self.spin_wall_hw.setFixedHeight(40)
+        self.spin_wall_hw.setRange(2, 40)
+        self.spin_wall_hw.setSingleStep(1)
+        self.spin_wall_hw.setValue(self.config.wall_peak_half_width)
+        self.spin_wall_hw.valueChanged.connect(
+            lambda v: self._update_thread_param("wall_peak_half_width", v)
+        )
+        param_layout.addRow("墙壁遮罩半宽 (px):", self.spin_wall_hw)
+
         # 最小虫体面积
         self.spin_min_area = QSpinBox()
         self.spin_min_area.setFixedHeight(40)
@@ -375,8 +388,7 @@ class WormCounterApp(QMainWindow):
 
         self._tips_label = QLabel(
             "💡 提示：在【暂停】或【未开始】时，\n"
-            "修改高度可直接在画面预览检测线位置。\n"
-            "更改通道数量将实时重置表格。"
+            "修改高度可直接在画面预览检测线位置。"
         )
         self._tips_label.setStyleSheet(
             "color: #6B8BAE; font-weight: normal; line-height: 1.5;"
@@ -500,7 +512,6 @@ class WormCounterApp(QMainWindow):
             f"QPushButton:hover {{ filter: brightness(110%); border: 1px solid white; }} "
             f"QPushButton:disabled {{ {self._disabled_style()} }}"
         )
-
         if not self.btn_main_action.isEnabled():
             self.btn_main_action.setStyleSheet(
                 f"QPushButton {{ background-color: {gray_bg}; color: {gray_txt}; }} "
@@ -550,21 +561,6 @@ class WormCounterApp(QMainWindow):
     def _update_thread_param(self, key: str, value) -> None:
         if self.thread and self.thread.isRunning():
             self.thread.update_param(key, value)
-
-    def _on_channels_changed(self, value: int) -> None:
-        self._update_thread_param("num_channels", value)
-        self.labels = sorted(range(1, value + 1), reverse=True)
-        new_counts = {label: self.current_counts.get(label, 0) for label in self.labels}
-        self.current_counts = new_counts
-
-        self.table.setRowCount(len(self.labels))
-        for i, label in enumerate(self.labels):
-            item_id = QTableWidgetItem(f"CH-{label:02d}")
-            item_id.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
-            self.table.setItem(i, 0, item_id)
-            item_count = QTableWidgetItem(str(self.current_counts[label]))
-            item_count.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
-            self.table.setItem(i, 1, item_count)
 
     def _on_tripwire_changed(self, value: float) -> None:
         ratio = self._from_display(value)
@@ -649,6 +645,20 @@ class WormCounterApp(QMainWindow):
             self._handle_main_action()
         super().keyPressEvent(event)
 
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
+        if hasattr(self, "_resize_timer") and self._resize_timer is not None:
+            self._resize_timer.stop()
+        self._resize_timer = QTimer(self)
+        self._resize_timer.setSingleShot(True)
+        self._resize_timer.setInterval(50)
+        self._resize_timer.timeout.connect(self._on_resize_idle)
+        self._resize_timer.start()
+
+    def _on_resize_idle(self) -> None:
+        """窗口大小稳定后重新渲染当前帧"""
+        self._show_latest_frame()
+
     # ==========================================================
     # 动作处理
     # ==========================================================
@@ -717,6 +727,8 @@ class WormCounterApp(QMainWindow):
             self.btn_main_action.setEnabled(True)
             self.btn_main_action.setText("▶ 开始识别")
             self._refresh_main_action_btn()
+            self.btn_restart.setEnabled(True)
+            self.btn_restart.show()
             self.statusBar.showMessage(
                 f"📂 已加载: {os.path.basename(file_name)}。"
                 "你可以切换到【参数调节】预览检测线高度。"
@@ -742,6 +754,7 @@ class WormCounterApp(QMainWindow):
 
         self.btn_main_action.setText("⏸ 暂停分析 (Space)")
         self._refresh_main_action_btn()
+        self.btn_restart.hide()
         # 创建 MOG2 引擎
         self.engine = MOG2Engine(self.config)
 
@@ -749,11 +762,13 @@ class WormCounterApp(QMainWindow):
         self.thread = VideoThread(
             self.current_video_path, self.engine, self.config
         )
-        self.thread.update_param("num_channels", self.spin_channels.value())
+        self.thread.update_param("num_channels", self.config.num_channels)
         self.thread.update_param("tripwire_ratio", self._from_display(self.spin_tripwire.value()))
         self.thread.update_param("min_area", self.spin_min_area.value())
         self.thread.update_param("mask_top_ratio", self._from_display(self.spin_mask_top.value()))
         self.thread.update_param("mask_bottom_ratio", self._from_display(self.spin_mask_bottom.value()))
+
+        self.thread.update_param("wall_peak_half_width", self.spin_wall_hw.value())
 
         self.thread.change_pixmap_signal.connect(self._update_frame)
         self.thread.update_counts_signal.connect(self._update_stats)
@@ -768,10 +783,22 @@ class WormCounterApp(QMainWindow):
         self.statusBar.showMessage("▶️ 正在实时分析中...")
         self.setFocus()
 
+    def _restart_analysis(self) -> None:
+        """重新分析：停止当前线程后立即启动新一轮分析"""
+        if not self.current_video_path:
+            return
+        # 停止旧线程
+        if self.thread is not None:
+            self.thread.stop()
+            self.thread = None
+        # 启动新分析
+        self._start_analysis()
+
     def _on_finished(self) -> None:
         self.btn_main_action.setEnabled(True)
-        self.btn_main_action.setText("🔄 重新分析该视频")
+        self.btn_main_action.setText("🔄 重新分析")
         self._refresh_main_action_btn()
+        self.btn_restart.hide()
         self.finish_group.show()
         self.progress_slider.setValue(self.progress_slider.maximum())
         self.progress_slider.hide()
@@ -781,7 +808,7 @@ class WormCounterApp(QMainWindow):
             self._draw_chart(self.current_counts)
         self.tabs.setCurrentIndex(0)
         self.statusBar.showMessage(
-            "✅ 视频分析完毕，图表已展示在左侧。可导出报告或重新分析。"
+            "✅ 视频分析完毕，图表已展示在左侧。可导出报告或点击「重新分析」。"
         )
 
     def _export_results(self) -> None:
@@ -857,13 +884,19 @@ class WormCounterApp(QMainWindow):
                 QMessageBox.critical(self, "导出失败", str(e))
 
     def _save_config_dialog(self) -> None:
-        path, _ = QFileDialog.getSaveFileName(
-            self, "保存配置文件", "wormtracker_config.yaml",
-            "YAML (*.yaml *.yml)",
-        )
+        # 将 UI 当前值同步回 config 对象
+        self.config.tripwire_ratio = self._from_display(self.spin_tripwire.value())
+        self.config.mask_top_ratio = self._from_display(self.spin_mask_top.value())
+        self.config.mask_bottom_ratio = self._from_display(self.spin_mask_bottom.value())
+        self.config.min_area = self.spin_min_area.value()
+        self.config.wall_peak_half_width = self.spin_wall_hw.value()
+
+        path = self.config_path
         if path:
             save_config(path, self.config)
-            self.statusBar.showMessage(f"💾 配置已保存至: {path}")
+            self.statusBar.showMessage("💾 配置已保存")
+        else:
+            self.statusBar.showMessage("⚠ 未设置配置文件路径，无法保存")
 
     # ==========================================================
     # UI 更新

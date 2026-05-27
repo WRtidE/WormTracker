@@ -21,6 +21,7 @@ def draw_dashboard(
     cooldown_rem: int = 0,
     mask_top: Optional[float] = None,
     mask_bottom: Optional[float] = None,
+    crossing_channels: frozenset = frozenset(),
 ) -> np.ndarray:
     """UI 大屏渲染。
 
@@ -121,6 +122,18 @@ def draw_dashboard(
                 frame, str(count_val), (center_x - 8, tripwire_y - 10),
                 cv2.FONT_HERSHEY_SIMPLEX, 0.4, color, 1,
             )
+
+    # ── 穿越通道绿色闪烁 ──
+    if crossing_channels:
+        flash_overlay = frame.copy()
+        for idx, (c_left, c_right) in enumerate(grid_data["channel_bounds"]):
+            channel_id = current_total_channels - idx
+            if channel_id in crossing_channels:
+                cv2.rectangle(
+                    flash_overlay, (c_left, 0), (c_right, h),
+                    (0, 255, 0), -1,
+                )
+        cv2.addWeighted(flash_overlay, 0.25, frame, 0.75, 0, frame)
 
     # 目标点
     for history in active_worms.values():
