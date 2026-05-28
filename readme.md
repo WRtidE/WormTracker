@@ -10,7 +10,7 @@
   <img src="https://img.shields.io/github/stars/WRtidE/WormTracker?style=flat-square" alt="Stars">
 </p>
 
-<p align="center"><img src="https://azusa-img-1348009459.cos.ap-beijing.myqcloud.com/wormtrackericon.png" alt="WormTracker Icon" width="180"></p>
+> 📖 **使用说明**: 请参阅 [用户说明书](用户说明书.md)
 
 ## 1. 系统概述
 
@@ -262,5 +262,4 @@ Windows SmartScreen 会提示「Windows 已保护你的电脑」。
 > pip install -r requirements.txt
 > python main.py
 > ```
-
 

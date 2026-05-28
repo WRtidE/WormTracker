@@ -34,9 +34,9 @@ matplotlib.rcParams["axes.unicode_minus"] = False
 try:
     from wormtracker.core.grid import get_interpolated_grid, _find_projection_peaks
 except ImportError:
-    # 如果不在包路径中，手动添加
+    # 如果不在包路径中，手动添加项目根目录
     import os
-    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
     from wormtracker.core.grid import get_interpolated_grid, _find_projection_peaks
 
 
